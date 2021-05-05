@@ -13,45 +13,48 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if defined(ARDUINO) && !defined(ARDUINO_SFE_EDGE)
-#define ARDUINO_EXCLUDE_CODE
-#endif  // defined(ARDUINO) && !defined(ARDUINO_SFE_EDGE)
+//#if defined(ARDUINO) && !defined(ARDUINO_SFE_EDGE)
+//#define ARDUINO_EXCLUDE_CODE
+//#endif  // defined(ARDUINO) && !defined(ARDUINO_SFE_EDGE)
 
 #ifndef ARDUINO_EXCLUDE_CODE
-
+#include "Arduino.h"
 #include "detection_responder.h"
 
-#include "am_bsp.h"
+//#include "am_bsp.h"
 
 // This implementation will light up LEDs on the board in response to the
 // inference results.
 void RespondToDetection(tflite::ErrorReporter* error_reporter,
                         int8_t person_score, int8_t no_person_score) {
   static bool is_initialized = false;
-  if (!is_initialized) {
+  //if (!is_initialized) {
     // Setup LED's as outputs.  Leave red LED alone since that's an error
     // indicator for sparkfun_edge in image_provider.
-    am_devices_led_init((am_bsp_psLEDs + AM_BSP_LED_BLUE));
-    am_devices_led_init((am_bsp_psLEDs + AM_BSP_LED_GREEN));
-    am_devices_led_init((am_bsp_psLEDs + AM_BSP_LED_YELLOW));
-    is_initialized = true;
-  }
+ //   am_devices_led_init((am_bsp_psLEDs + AM_BSP_LED_BLUE));
+ //   am_devices_led_init((am_bsp_psLEDs + AM_BSP_LED_GREEN));
+ //   am_devices_led_init((am_bsp_psLEDs + AM_BSP_LED_YELLOW));
+ //   is_initialized = true;
+ // }
 
   // Toggle the blue LED every time an inference is performed.
-  am_devices_led_toggle(am_bsp_psLEDs, AM_BSP_LED_BLUE);
+  //am_devices_led_toggle(am_bsp_psLEDs, AM_BSP_LED_BLUE);
 
   // Turn on the green LED if a person was detected.  Turn on the yellow LED
   // otherwise.
-  am_devices_led_off(am_bsp_psLEDs, AM_BSP_LED_YELLOW);
-  am_devices_led_off(am_bsp_psLEDs, AM_BSP_LED_GREEN);
+  //am_devices_led_off(am_bsp_psLEDs, AM_BSP_LED_YELLOW);
+  //am_devices_led_off(am_bsp_psLEDs, AM_BSP_LED_GREEN);
   if (person_score > no_person_score) {
-    am_devices_led_on(am_bsp_psLEDs, AM_BSP_LED_GREEN);
+	  digitalWrite(13, HIGH);
+  //  am_devices_led_on(am_bsp_psLEDs, AM_BSP_LED_GREEN);
   } else {
-    am_devices_led_on(am_bsp_psLEDs, AM_BSP_LED_YELLOW);
+  //  am_devices_led_on(am_bsp_psLEDs, AM_BSP_LED_YELLOW);
+	digitalWrite(13, LOW);
   }
 
   TF_LITE_REPORT_ERROR(error_reporter, "Person score: %d No person score: %d",
                        person_score, no_person_score);
+
 }
 
 #endif  // ARDUINO_EXCLUDE_CODE

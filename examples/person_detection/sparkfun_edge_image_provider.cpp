@@ -13,23 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if defined(ARDUINO)
+#if defined(__ARDUINO_TEENSY_MICROMOD)
 #include "arduino_HM01B0_platform.h"
 #endif  // defined(ARDUINO)
 
 
 #ifndef ARDUINO_EXCLUDE_CODE
 
-#include "himax_driver_HM01B0.h"
-#include "himax_driver_HM01B0_RAW8_QVGA_8bits_lsb_5fps.h"
-#include "himax_driver_HM01B0_debug.h"
-#include "himax_driver_HM01B0_optimized.h"
+#include "HM01B0.h"
+#include "HM01B0_regs.h"
 #include "image_provider.h"
-
+HM01B0 hm01b0(7, 8, 33, 32, 2, 40, 41, 42, 43, 44, 45, 6, 9);  //Sparkfun ML Carrier
+uint8_t frameBuffer[(324) * 244] DMAMEM;
+  
 // These are headers from Ambiq's Apollo3 SDK.
-#include "am_bsp.h"
-#include "am_mcu_apollo.h"
-#include "am_util.h"
 #include "third_party/gemmlowp/internal/detect_platform.h"
 
 // #define DEMO_HM01B0_FRAMEBUFFER_DUMP_ENABLE
@@ -38,147 +35,49 @@ limitations under the License.
 // from being enabled.
 #define ENABLE_LOGGING
 
-namespace {
-
-//*****************************************************************************
-//
-// HM01B0 Configuration
-//
-//*****************************************************************************
-static hm01b0_cfg_t s_HM01B0Cfg = {
-  // i2c settings
-  ui16SlvAddr : HM01B0_DEFAULT_ADDRESS,
-  eIOMMode : HM01B0_IOM_MODE,
-  ui32IOMModule : HM01B0_IOM_MODULE,
-  sIOMCfg : {
-    eInterfaceMode : HM01B0_IOM_MODE,
-    ui32ClockFreq : HM01B0_I2C_CLOCK_FREQ,
-  },
-  pIOMHandle : NULL,
-
-  // MCLK settings
-  ui32CTimerModule : HM01B0_MCLK_GENERATOR_MOD,
-  ui32CTimerSegment : HM01B0_MCLK_GENERATOR_SEG,
-  ui32CTimerOutputPin : HM01B0_PIN_MCLK,
-
-  // data interface
-  ui8PinSCL : HM01B0_PIN_SCL,
-  ui8PinSDA : HM01B0_PIN_SDA,
-  ui8PinD0 : HM01B0_PIN_D0,
-  ui8PinD1 : HM01B0_PIN_D1,
-  ui8PinD2 : HM01B0_PIN_D2,
-  ui8PinD3 : HM01B0_PIN_D3,
-  ui8PinD4 : HM01B0_PIN_D4,
-  ui8PinD5 : HM01B0_PIN_D5,
-  ui8PinD6 : HM01B0_PIN_D6,
-  ui8PinD7 : HM01B0_PIN_D7,
-  ui8PinVSYNC : HM01B0_PIN_VSYNC,
-  ui8PinHSYNC : HM01B0_PIN_HSYNC,
-  ui8PinPCLK : HM01B0_PIN_PCLK,
-
-  ui8PinTrig : HM01B0_PIN_TRIG,
-  ui8PinInt : HM01B0_PIN_INT,
-  pfnGpioIsr : NULL,
-};
-
 static constexpr int kFramesToInitialize = 4;
 
 bool g_is_camera_initialized = false;
 
-void burst_mode_enable(tflite::ErrorReporter* error_reporter, bool bEnable) {
-  am_hal_burst_avail_e eBurstModeAvailable;
-  am_hal_burst_mode_e eBurstMode;
-
-  // Check that the Burst Feature is available.
-  if (AM_HAL_STATUS_SUCCESS ==
-      am_hal_burst_mode_initialize(&eBurstModeAvailable)) {
-    if (AM_HAL_BURST_AVAIL == eBurstModeAvailable) {
-      TF_LITE_REPORT_ERROR(error_reporter, "Apollo3 Burst Mode is Available\n");
-    } else {
-      TF_LITE_REPORT_ERROR(error_reporter,
-                           "Apollo3 Burst Mode is Not Available\n");
-      return;
-    }
-  } else {
-    TF_LITE_REPORT_ERROR(error_reporter,
-                         "Failed to Initialize for Burst Mode operation\n");
-  }
-
-  // Make sure we are in "Normal" mode.
-  if (AM_HAL_STATUS_SUCCESS == am_hal_burst_mode_disable(&eBurstMode)) {
-    if (AM_HAL_NORMAL_MODE == eBurstMode) {
-      TF_LITE_REPORT_ERROR(error_reporter,
-                           "Apollo3 operating in Normal Mode (48MHz)\n");
-    }
-  } else {
-    TF_LITE_REPORT_ERROR(error_reporter,
-                         "Failed to Disable Burst Mode operation\n");
-  }
-
-  // Put the MCU into "Burst" mode.
-  if (bEnable) {
-    if (AM_HAL_STATUS_SUCCESS == am_hal_burst_mode_enable(&eBurstMode)) {
-      if (AM_HAL_BURST_MODE == eBurstMode) {
-        TF_LITE_REPORT_ERROR(error_reporter,
-                             "Apollo3 operating in Burst Mode (96MHz)\n");
-      }
-    } else {
-      TF_LITE_REPORT_ERROR(error_reporter,
-                           "Failed to Enable Burst Mode operation\n");
-    }
-  }
-}
-
-}  // namespace
 
 TfLiteStatus InitCamera(tflite::ErrorReporter* error_reporter) {
   TF_LITE_REPORT_ERROR(error_reporter, "Initializing HM01B0...\n");
 
-  am_hal_clkgen_control(AM_HAL_CLKGEN_CONTROL_SYSCLK_MAX, 0);
 
-  // Set the default cache configuration
-  am_hal_cachectrl_config(&am_hal_cachectrl_defaults);
-  am_hal_cachectrl_enable();
+  uint8_t status;
+  status = hm01b0.loadSettings(LOAD_DEFAULT_REGS);
+  status = hm01b0.set_framesize(FRAMESIZE_QVGA);
 
-  // Configure the board for low power operation. This breaks logging by
-  // turning off the itm and uart interfaces.
-#ifndef ENABLE_LOGGING
-  am_bsp_low_power_init();
-#endif
-
-  // Enable interrupts so we can receive messages from the boot host.
-  am_hal_interrupt_master_enable();
-
-  burst_mode_enable(error_reporter, true);
-
-  // Turn on the 1.8V regulator for DVDD on the camera.
-  am_hal_gpio_pinconfig(AM_BSP_GPIO_CAMERA_HM01B0_DVDDEN,
-                        g_AM_HAL_GPIO_OUTPUT_12);
-  am_hal_gpio_output_set(AM_BSP_GPIO_CAMERA_HM01B0_DVDDEN);
-
-  // Configure Red LED for debugging.
-  am_devices_led_init((am_bsp_psLEDs + AM_BSP_LED_RED));
-  am_devices_led_off(am_bsp_psLEDs, AM_BSP_LED_RED);
-
-  hm01b0_power_up(&s_HM01B0Cfg);
-
-  // TODO(njeff): check the delay time to just fit the spec.
-  am_util_delay_ms(1);
-
-  hm01b0_mclk_enable(&s_HM01B0Cfg);
-
-  // TODO(njeff): check the delay time to just fit the spec.
-  am_util_delay_ms(1);
-
-  if (HM01B0_ERR_OK != hm01b0_init_if(&s_HM01B0Cfg)) {
-    return kTfLiteError;
+  if (status != 0) {
+    Serial.println("Settings failed to load");
+    while (1) {}
   }
+  hm01b0.set_framerate(30);  //15, 30, 60, 120
 
-  if (HM01B0_ERR_OK !=
-      hm01b0_init_system(&s_HM01B0Cfg, (hm_script_t*)sHM01B0InitScript,
-                         sizeof(sHM01B0InitScript) / sizeof(hm_script_t))) {
-    return kTfLiteError;
-  }
+  /* Gain Ceilling
+   * GAINCEILING_1X
+   * GAINCEILING_4X
+   * GAINCEILING_8X
+   * GAINCEILING_16X
+   */
+  hm01b0.set_gainceiling(GAINCEILING_2X);
+  /* Brightness
+   *  Can be 1, 2, or 3
+   */
+  hm01b0.set_brightness(3);
+  hm01b0.set_autoExposure(true, 1500);  //higher the setting the less saturaturation of whiteness
+  hm01b0.cmdUpdate();  //only need after changing auto exposure settings
+
+  hm01b0.set_mode(HIMAX_MODE_STREAMING, 0); // turn on, continuous streaming mode
+
+  uint32_t FRAME_HEIGHT = hm01b0.height();
+  uint32_t FRAME_WIDTH  = hm01b0.width();
+  Serial.printf("ImageSize (w,h): %d, %d\n", FRAME_WIDTH, FRAME_HEIGHT);
+
+  // Lets setup camera interrupt priorities:
+  //hm01b0.setVSyncISRPriority(102); // higher priority than default
+  hm01b0.setDMACompleteISRPriority(192); // lower than default
+
 
   return kTfLiteOk;
 }
@@ -189,24 +88,32 @@ TfLiteStatus GetImage(tflite::ErrorReporter* error_reporter, int frame_width,
                       int frame_height, int channels, int8_t* frame) {
   if (!g_is_camera_initialized) {
     TfLiteStatus init_status = InitCamera(error_reporter);
-    if (init_status != kTfLiteOk) {
-      am_hal_gpio_output_set(AM_BSP_GPIO_LED_RED);
-      return init_status;
-    }
-    // Drop a few frames until auto exposure is calibrated.
-    for (int i = 0; i < kFramesToInitialize; ++i) {
-      hm01b0_blocking_read_oneframe_scaled(&s_HM01B0Cfg, frame, frame_width,
-                                           frame_height, channels);
-    }
+
     g_is_camera_initialized = true;
   }
 
-  hm01b0_blocking_read_oneframe_scaled(&s_HM01B0Cfg, frame, frame_width,
-                                       frame_height, channels);
+  //hm01b0_blocking_read_oneframe_scaled(&s_HM01B0Cfg, frame, frame_width,
+  //                                     frame_height, channels);
+									   
+  
+  hm01b0.readFrame(frameBuffer);
+  
+  
+  // Calculate the number of pixels to crop to get a centered image.
+  const int offset_x = (324 - (frame_width)) / 2;
+  const int offset_y = (244 - (frame_height )) / 2;
+  //Serial.printf("%d, %d\n",offset_x,offset_y);
+  
+  uint32_t image_idx = 0;
+  uint32_t frame_idx = 0;
+  for (uint32_t row = 0; row < 96; row++) {
+    for (uint32_t col = 0; col < 96; col++) {
+      frame_idx = (324 * (row + offset_y)) + col + offset_x;
+      uint8_t framePixel = frameBuffer[frame_idx];
+      frame[image_idx++] = framePixel;
+    }
+  }
 
-#ifdef DEMO_HM01B0_FRAMEBUFFER_DUMP_ENABLE
-  hm01b0_framebuffer_dump(frame, frame_width * frame_height * channels);
-#endif
 
   return kTfLiteOk;
 }
